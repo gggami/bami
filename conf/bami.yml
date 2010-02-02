@@ -1,0 +1,12 @@
+nick: bami
+server: 
+port: 6667
+channel: #bami
+password: 
+say_interval: 100
+say_delay: 2
+say_special_threshold: 13
+datasource:
+  dsn: dbi:mysql:bami:127.0.0.1
+  user: 
+  password:
