@@ -31,7 +31,6 @@ sub process {
     my $instance = shift;
     my $c = AnyEvent->condvar;
     my $con;
-    my $mecab = Text::MeCab->new;
     $instance->dbi(Bami::DBI->new(%{$instance->datasource}));
 
     $con = AnyEvent::IRC::Client->new;
@@ -58,44 +57,33 @@ sub process {
             my ($self, $msg) = @_;
             _debug($msg);
 
+            my $stmt = $msg->{params}->[1];
+            my $user = ((split /!/, $msg->{prefix})[0]);  
+            $user =~ s/_+$//; 
+            my $symbols = $instance->parse_msg($stmt);
+
+            my $reply = $instance->select_first_msg($stmt);
+            return $instance->reply($con,$reply) if $reply;
+
             my $t = time;
             if ( $instance->last_say_time &&
                     ($instance->last_say_time + $instance->say_interval) > $t ) {
                 return;
             }
 
-            my $stmt = $msg->{params}->[1];
-            my $user = ((split /!/, $msg->{prefix})[0]);  
-            $user =~ s/_+$//; 
-
-            my $reply;
             unless ( $t % $instance->say_special_threshold ) {
                 $reply = $instance->select_special_msg($user);
             }
 
-            unless ( $reply ) {
-                my @symbols;
-                for (my $node = $mecab->parse($stmt); $node; $node = $node->next) {
-                    print $node->surface, "\n";
-                    push @symbols, {
-                        surface => $node->surface,
-                        feature => $node->feature,
-                    };
-                }
-                _debug(\@symbols);
-                for my $s (@symbols) {
-                    if ((split /,/, $s->{feature})[0] eq '名詞') {
-                        $reply = $instance->select_msg($s->{surface});
-                        last if $reply;
-                    }
-                }
-                unless ( $reply ) {
-                    $reply = $instance->select_random_msg();
+            unless ( $reply && (my $words = $instance->get_words($symbols,'名詞')) ) {
+                for my $w (@$words) {
+                    $reply = $instance->select_msg($w);
+                    last if $reply;
                 }
             }
 
-            sleep $instance->say_delay;
-            $con->send_chan($instance->channel, "NOTICE", $instance->channel, $reply);
+            $reply ||= $instance->select_random_msg();
+            $instance->reply($con,$reply);
             $instance->last_say_time($t);
         },
         disconnect => sub {
@@ -117,10 +105,52 @@ sub process {
     $c->recv;
 }
 
+sub reply {
+    my ($self,$con,$reply) = @_;
+    sleep $self->say_delay;
+    $con->send_chan($self->channel, "NOTICE", $self->channel, $reply);
+}
+
+sub parse_msg {
+    my ($self,$stmt) = @_;
+    my $mecab = Text::MeCab->new;
+    my @symbols;
+    for (my $node = $mecab->parse($stmt); $node; $node = $node->next) {
+        print $node->surface, "\n";
+        push @symbols, {
+            surface => $node->surface,
+            feature => $node->feature,
+        };
+    }
+    _debug(\@symbols);
+    return @symbols ? \@symbols : [];
+}
+
+sub get_words {
+    my ($self,$symbols,$feature) = @_;
+    my @words;
+    for my $s (@$symbols) {
+        if ((split /,/, $s->{feature})[0] eq $feature) {
+            push @words, $s->{surface};
+        }
+    }
+    return @words ? \@words : [];
+}
+
+sub select_first_msg {
+    my ($self,@bind) = @_;
+    my $sth = $self->dbi->execute("select * from messages where weight = 2 and match(keyword) against(?) order by RAND() limit 1",@bind);
+    my $records = $sth->fetchall_arrayref( +{} );
+    $sth->finish;
+    if ($records) {
+        _debug($records->[0]);
+        return $records->[0]->{msg};
+    }
+}
+
 sub select_msg {
     my ($self,@bind) = @_;
-    my $sth = $self->dbi->execute("select * from msg where match(keyword) against(?) order by RAND() limit 0, 1",@bind);
-
+    my $sth = $self->dbi->execute("select * from messages where match(keyword) against(?) order by RAND() limit 1",@bind);
     my $records = $sth->fetchall_arrayref( +{} );
     $sth->finish;
     if ($records) {
@@ -131,7 +161,7 @@ sub select_msg {
 
 sub select_special_msg {
     my ($self,@bind) = @_;
-    my $sth = $self->dbi->execute("select * from special_msg where nick = ? order by RAND() limit 0, 1",@bind);
+    my $sth = $self->dbi->execute("select * from special_messages where nick = ? order by RAND() limit 1",@bind);
     my $records = $sth->fetchall_arrayref( +{} );
     $sth->finish;
     if ($records) {
@@ -142,7 +172,7 @@ sub select_special_msg {
 
 sub select_random_msg {
     my ($self) = @_;
-    my $sth = $self->dbi->execute("select * from msg where keyword is null order by RAND() limit 0, 1");
+    my $sth = $self->dbi->execute("select * from messages where keyword is null order by RAND() limit 1");
     my $records = $sth->fetchall_arrayref( +{} );
     $sth->finish;
     if ($records) {
