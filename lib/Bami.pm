@@ -12,6 +12,7 @@ use YAML;
 use Path::Class;
 use Text::MeCab;
 use UNIVERSAL::require;
+use Time::HiRes qw(sleep);
 
 use Bami::DBI;
 
@@ -58,12 +59,12 @@ sub process {
             _debug($msg);
 
             my $stmt = $msg->{params}->[1];
-            my $user = ((split /!/, $msg->{prefix})[0]);  
+            my $user = ((split /!/, $msg->{prefix})[0]);
             $user =~ s/_+$//; 
             my $symbols = $instance->parse_msg($stmt);
 
             my $reply = $instance->select_first_msg($stmt);
-            return $instance->reply($con,$reply) if $reply;
+            return $instance->reply($con,$reply,0.2) if $reply;
 
             my $t = time;
             if ( $instance->last_say_time &&
@@ -106,8 +107,9 @@ sub process {
 }
 
 sub reply {
-    my ($self,$con,$reply) = @_;
-    sleep $self->say_delay;
+    my ($self,$con,$reply,$delay) = @_;
+    $delay = defined $delay ? $delay : $self->say_delay;
+    sleep $delay;
     $con->send_chan($self->channel, "NOTICE", $self->channel, $reply);
 }
 
