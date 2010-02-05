@@ -76,7 +76,7 @@ sub process {
                 $reply = $instance->select_special_msg($user);
             }
 
-            unless ( $reply && (my $words = $instance->get_words($symbols,'名詞')) ) {
+            if( !defined($reply) && (my $words = $instance->get_words($symbols,'名詞')) ) {
                 for my $w (@$words) {
                     $reply = $instance->select_msg($w);
                     last if $reply;
@@ -159,6 +159,7 @@ sub select_msg {
         _debug($records->[0]);
         return $records->[0]->{msg};
     }
+    return;
 }
 
 sub select_special_msg {
@@ -170,6 +171,7 @@ sub select_special_msg {
         _debug($records->[0]);
         return $records->[0]->{msg};
     }
+    return;
 }
 
 sub select_random_msg {
@@ -178,8 +180,10 @@ sub select_random_msg {
     my $records = $sth->fetchall_arrayref( +{} );
     $sth->finish;
     if ($records) {
+        _debug($records->[0]);
         return $records->[0]->{msg};
     }
+    return;
 }
 
 our $Debug = 1;
